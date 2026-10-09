@@ -1,33 +1,59 @@
 import store from '../store';
 
+// The drive's <video> element is the playback clock. DriveVideo attaches it once
+// it has loaded, and everything that follows playback (timeline, map, time
+// display) reads currentOffset(). Until then, or without a video, playback is
+// parked at the last offset it was seeked to.
+let video = null;
+let parked = 0;
+
+function videoStartOffset() {
+  return store.getState().currentRoute?.videoStartOffset || 0;
+}
+
+function clampToLoop(offset) {
+  const { loop } = store.getState();
+  return loop ? Math.min(Math.max(offset, loop.startTime), loop.startTime + loop.duration) : offset;
+}
+
 /**
  * Get current playback offset
  *
- * @param {object} state
- * @returns {number}
+ * @returns {number} milliseconds from the start of the route
  */
-export function currentOffset(state = null) {
-  if (!state) {
-    state = store.getState();
-  }
+export function currentOffset() {
+  return video ? videoStartOffset() + (video.currentTime * 1000) : clampToLoop(parked);
+}
 
-  /** @type {number} */
-  let offset;
-  if (state.offset === null && state.loop?.startTime) {
-    offset = state.loop.startTime;
-  } else {
-    const playSpeed = state.isBufferingVideo ? 0 : state.desiredPlaySpeed;
-    offset = state.offset + ((Date.now() - state.startTime) * playSpeed);
+/**
+ * Seek playback, staying within the selected loop
+ *
+ * @param {number} offset milliseconds from the start of the route
+ */
+export function seekTo(offset) {
+  parked = offset;
+  if (video) {
+    video.currentTime = Math.max(0, clampToLoop(offset) - videoStartOffset()) / 1000;
   }
+}
 
-  if (offset !== null && state.loop?.startTime) {
-    // respect the loop
-    const loopOffset = state.loop.startTime;
-    if (offset < loopOffset) {
-      offset = loopOffset;
-    } else if (offset > loopOffset + state.loop.duration) {
-      offset = ((offset - loopOffset) % state.loop.duration) + loopOffset;
-    }
+export function playVideo(speed) {
+  if (video) {
+    video.playbackRate = speed;
+    video.play().catch(() => {});
   }
-  return offset;
+}
+
+export function pauseVideo() {
+  video?.pause();
+}
+
+/**
+ * @param {HTMLVideoElement|null} element a video with media loaded, or null once it has none
+ */
+export function attachVideo(element) {
+  video = element;
+  if (video) {
+    seekTo(parked);
+  }
 }
