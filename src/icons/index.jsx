@@ -263,6 +263,18 @@ export const VolumeOff = (props) => (
   </SvgIcon>
 );
 
+export const Fullscreen = (props) => (
+  <SvgIcon {...props}>
+    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+  </SvgIcon>
+);
+
+export const FullscreenExit = (props) => (
+  <SvgIcon {...props}>
+    <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+  </SvgIcon>
+);
+
 export const AddCircleOutlineIcon = (props) => (
   <SvgIcon {...props} viewBox="0 -960 960 960">
     <path d="M440-280h80v-160h160v-80H520v-160h-80v160H280v80h160v160Zm40 200q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z" />

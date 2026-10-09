@@ -1,13 +1,13 @@
 import { vi } from 'vitest';
 
-import { attachVideo, currentOffset, seekTo } from '.';
+import { attachVideo, currentOffset, followPlayback, seekTo, tick } from '.';
 import { pause, play, reducer, seek, selectLoop, videoState } from './playback';
 
 const state = { currentRoute: null, loop: null };
 vi.mock('../store', () => ({ default: { getState: () => state } }));
 
 function makeVideo() {
-  return { currentTime: 0, playbackRate: 1, play: vi.fn(async () => {}), pause: vi.fn() };
+  return { currentTime: 0, paused: true, playbackRate: 1, play: vi.fn(async () => {}), pause: vi.fn() };
 }
 
 describe('playback', () => {
@@ -72,5 +72,42 @@ describe('playback', () => {
     expect(currentOffset()).toEqual(1250);
 
     expect(dispatch.mock.calls.map(([action]) => action.type)).toEqual(['ACTION_PLAY', 'ACTION_PAUSE', 'ACTION_SEEK']);
+  });
+
+  it('tells followers about seeks without polling a paused video', () => {
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame');
+    attachVideo(makeVideo());
+    const follower = vi.fn();
+    const stop = followPlayback(follower);
+    expect(follower).toHaveBeenLastCalledWith(1000);
+    seekTo(1500);
+    expect(follower).toHaveBeenLastCalledWith(1500);
+    stop();
+    seekTo(1200);
+    expect(follower).toHaveBeenCalledTimes(2);
+    expect(requestFrame).not.toHaveBeenCalled();
+    requestFrame.mockRestore();
+  });
+
+  it('updates followers every frame while the video plays', () => {
+    const frames = [];
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback));
+    const video = makeVideo();
+    attachVideo(video);
+    const follower = vi.fn();
+    const stop = followPlayback(follower);
+
+    video.paused = false;
+    tick();
+    video.currentTime = 1;
+    frames.shift()();
+    expect(follower).toHaveBeenLastCalledWith(1500);
+    expect(frames).toHaveLength(1);
+
+    video.paused = true;
+    frames.shift()();
+    expect(frames).toHaveLength(0);
+    stop();
+    requestFrame.mockRestore();
   });
 });

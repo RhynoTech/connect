@@ -4,7 +4,7 @@ import { connect } from 'react-redux';
 import ReactMapGL, { LinearInterpolator } from 'react-map-gl';
 
 import { fetchDriveCoords } from '../../actions/cached';
-import { currentOffset } from '../../timeline';
+import { currentOffset, followPlayback } from '../../timeline';
 import { DEFAULT_LOCATION, MAPBOX_STYLE, MAPBOX_TOKEN } from '../../utils/geocode';
 
 const INTERACTION_TIMEOUT = 5000;
@@ -38,9 +38,8 @@ class DriveMap extends Component {
   }
 
   componentDidMount() {
-    this.mounted = true;
     this.componentDidUpdate({}, {});
-    this.updateMarkerPos();
+    this.unfollowPlayback = followPlayback(this.updateMarkerPos);
   }
 
   componentDidUpdate(prevProps) {
@@ -68,7 +67,7 @@ class DriveMap extends Component {
   }
 
   componentWillUnmount() {
-    this.mounted = false;
+    this.unfollowPlayback();
   }
 
   onInteraction(ev) {
@@ -85,15 +84,11 @@ class DriveMap extends Component {
     }
   }
 
-  updateMarkerPos() {
-    if (!this.mounted) {
-      return;
-    }
-
+  updateMarkerPos(offset = currentOffset()) {
     const markerSource = this.map && this.map.getMap().getSource('seekPoint');
     if (markerSource) {
       if (this.props.currentRoute && this.props.currentRoute.driveCoords) {
-        const pos = this.posAtOffset(currentOffset());
+        const pos = this.posAtOffset(offset);
         if (pos && pos.some((coordinate, index) => coordinate != this.lastMapPos[index])) {
           this.lastMapPos = pos;
           markerSource.setData({
@@ -111,8 +106,6 @@ class DriveMap extends Component {
         });
       }
     }
-
-    requestAnimationFrame(this.updateMarkerPos);
   }
 
   moveViewportTo(pos) {
@@ -142,6 +135,7 @@ class DriveMap extends Component {
     }
 
     this.setPath(Object.values(currentRoute.driveCoords));
+    this.updateMarkerPos();
   }
 
   onRef(el) {

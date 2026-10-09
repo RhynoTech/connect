@@ -7,6 +7,33 @@ import store from '../store';
 let video = null;
 let parked = 0;
 
+// Followers of playback get the offset on every frame while the video plays,
+// and once whenever it seeks, pauses or loads. A paused video costs nothing.
+const followers = new Set();
+let frame = null;
+
+function notify() {
+  frame = video && !video.paused ? requestAnimationFrame(notify) : null;
+  const offset = currentOffset();
+  followers.forEach((follower) => follower(offset));
+}
+
+export function tick() {
+  if (!frame) {
+    notify();
+  }
+}
+
+/**
+ * @param {(offset: number) => void} follower called with the playback offset
+ * @returns {() => void} stops following
+ */
+export function followPlayback(follower) {
+  followers.add(follower);
+  follower(currentOffset());
+  return () => followers.delete(follower);
+}
+
 function videoStartOffset() {
   return store.getState().currentRoute?.videoStartOffset || 0;
 }
@@ -35,6 +62,20 @@ export function seekTo(offset) {
   if (video) {
     video.currentTime = Math.max(0, clampToLoop(offset) - videoStartOffset()) / 1000;
   }
+  tick();
+}
+
+/**
+ * @returns {[number, number]|null} the loaded stretch of video around the current position, as route offsets
+ */
+export function bufferedRange() {
+  const { buffered, currentTime } = video || {};
+  for (let i = 0; i < (buffered?.length || 0); i++) {
+    if (buffered.start(i) <= currentTime && currentTime <= buffered.end(i)) {
+      return [buffered.start(i), buffered.end(i)].map((t) => videoStartOffset() + (t * 1000));
+    }
+  }
+  return null;
 }
 
 export function playVideo(speed) {
