@@ -10,7 +10,7 @@ import Thumbnails from './thumbnails';
 import theme from '../../theme';
 import { pushTimelineRange } from '../../actions';
 import Colors from '../../colors';
-import { currentOffset } from '../../timeline';
+import { currentOffset, followPlayback } from '../../timeline';
 import { seek } from '../../timeline/playback';
 import { getSegmentNumber } from '../../utils';
 
@@ -147,7 +147,7 @@ class Timeline extends Component {
   constructor(props) {
     super(props);
 
-    this.getOffset = this.getOffset.bind(this);
+    this.updateRuler = this.updateRuler.bind(this);
     this.handleClick = this.handleClick.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
     this.handlePointerDown = this.handlePointerDown.bind(this);
@@ -177,9 +177,8 @@ class Timeline extends Component {
   }
 
   componentDidMount() {
-    this.mounted = true;
-    requestAnimationFrame(this.getOffset);
-    this.componentDidUpdate({});
+    this.unfollowPlayback = followPlayback(this.updateRuler);
+    this.componentDidUpdate({}, this.state);
 
     if (typeof ResizeObserver !== 'undefined' && this.thumbnailsRef.current) {
       this.resizeObserver = new ResizeObserver((entries) => {
@@ -194,15 +193,18 @@ class Timeline extends Component {
     }
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps, prevState) {
     const { zoomOverride, zoom } = this.props;
     if (prevProps.zoomOverride !== zoomOverride || prevProps.zoom !== zoom) {
       this.setState({ zoom: zoomOverride || zoom });
     }
+    if (prevState.zoom !== this.state.zoom) {
+      this.updateRuler(currentOffset());
+    }
   }
 
   componentWillUnmount() {
-    this.mounted = false;
+    this.unfollowPlayback();
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
@@ -292,17 +294,8 @@ class Timeline extends Component {
     }
   }
 
-  getOffset() {
-    if (!this.mounted) {
-      return;
-    }
-    requestAnimationFrame(this.getOffset);
-    let offset = currentOffset();
-    if (this.seekIndex) {
-      offset = this.seekIndex;
-    }
-    offset = Math.floor(offset);
-    const percent = this.offsetToPercent(offset);
+  updateRuler(offset) {
+    const percent = this.offsetToPercent(Math.floor(offset));
     if (this.rulerRemaining.current && this.rulerRemaining.current.parentElement) {
       this.rulerRemaining.current.style.left = `${Math.floor(10000 * percent) / 100}%`;
       this.rulerRemaining.current.style.width = `${100 - Math.floor(10000 * percent) / 100}%`;
