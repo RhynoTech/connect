@@ -36,11 +36,11 @@ export function pause() {
   };
 }
 
-// resume / change play speed
-export function play(speed = 1) {
+// resume the playback
+export function play() {
   return (dispatch) => {
-    playVideo(speed);
-    dispatch({ type: Types.ACTION_PLAY, speed });
+    playVideo();
+    dispatch({ type: Types.ACTION_PLAY });
   };
 }
 

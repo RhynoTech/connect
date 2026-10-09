@@ -7,7 +7,7 @@ import { api } from '../../api/backend';
 
 import Colors from '../../colors';
 import { ErrorOutline } from '../../icons';
-import { attachVideo, currentOffset, seekTo, tick } from '../../timeline';
+import { attachVideo, currentOffset, park, seekTo, tick } from '../../timeline';
 import { pause, play, seek, videoState } from '../../timeline/playback';
 import { isIos } from '../../utils/browser.js';
 import Controls from './Controls';
@@ -23,9 +23,10 @@ const mirror = (video) => videoState({
   isBufferingVideo: video.readyState < 2 || video.seeking || (!video.paused && video.readyState < 3),
 });
 const MIRRORED_EVENTS = ['onLoadStart', 'onLoadedData', 'onCanPlay', 'onPlay', 'onPlaying', 'onPause', 'onWaiting',
-  'onSeeking', 'onSeeked', 'onRateChange'];
+  'onSeeked', 'onRateChange'];
 
 const isFullscreen = () => Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+const nativeHls = () => isIos() || !Hls.isSupported();
 
 const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBufferingVideo, mapView, children }) => {
   const boxRef = useRef(null);
@@ -45,7 +46,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
     seekTo(0);
   }, [fullname]);
 
-  // load the drive: native HLS on iOS, hls.js everywhere else
+  // load the drive: native HLS on iOS (and wherever hls.js can't run), hls.js everywhere else
   useEffect(() => {
     if (!fullname) {
       return undefined;
@@ -55,21 +56,21 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
     let hls = null;
     setError(null);
     setHasAudio(false);
-    if (isIos()) {
+    if (nativeHls()) {
       video.src = src;
     } else {
       let recovered = false;
       hls = new Hls({ maxBufferLength: 40 });
       hls.on(Hls.Events.BUFFER_CODECS, (_, data) => setHasAudio(Boolean(data.audio)));
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) {
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) {
+        if (data.response?.code === 404) {
+          setError(NOT_UPLOADED); // say so at once, not after hls.js gives up on the segment
+        } else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) {
           recovered = true;
+          park();
           hls.recoverMediaError();
-        } else {
-          setError(data.response?.code === 404 ? NOT_UPLOADED : UNABLE);
+        } else if (data.fatal) {
+          setError(UNABLE);
         }
       });
       hls.loadSource(src);
@@ -102,7 +103,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
     };
   }, []);
 
-  // controls show while paused, loading or on the map, and for a moment after any interaction
+  // controls show while paused, loading or on the map, and for a moment after the player is used
   const showControls = useCallback(() => {
     setActive(true);
     clearTimeout(hideTimer.current);
@@ -111,20 +112,11 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
   const controlsVisible = active || !isPlaying || isBufferingVideo || mapView || Boolean(error);
 
   const retry = () => {
-    seekTo(currentOffset());
-    setAttempt(attempt + 1);
+    park();
+    setAttempt((n) => n + 1);
   };
-  const togglePlay = () => {
-    const video = videoRef.current;
-    dispatch(video.paused ? play(video.playbackRate) : pause());
-  };
+  const togglePlay = () => dispatch(videoRef.current.paused ? play() : pause());
   const skip = (ms) => dispatch(seek(currentOffset() + ms));
-  const seekAndRecover = (offset) => {
-    dispatch(seek(offset));
-    if (error) {
-      retry(); // seeking past a missing segment loads from there
-    }
-  };
   const toggleMute = () => hasAudio && setMuted(!muted);
   const toggleFullscreen = () => {
     const box = boxRef.current;
@@ -134,7 +126,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
       box.requestFullscreen().then(() => window.screen.orientation?.lock?.('landscape')).catch(() => {});
     } else if (document.webkitFullscreenEnabled) {
       box.webkitRequestFullscreen();
-    } else {
+    } else if (videoRef.current.readyState) {
       videoRef.current.webkitEnterFullscreen?.(); // iPhone: the system player
     }
   };
@@ -145,10 +137,11 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
         ' ': togglePlay, k: togglePlay, j: () => skip(-10000), ArrowLeft: () => skip(-10000),
         l: () => skip(10000), ArrowRight: () => skip(10000), f: toggleFullscreen, m: toggleMute,
       }[ev.key];
+      // only when nothing else has focus, or something in the player does
       const { target } = ev;
       if (!action || ev.defaultPrevented || ev.metaKey || ev.ctrlKey || ev.altKey
-        || target.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"]')
-        || (ev.key === ' ' && target.closest('button'))) {
+        || (target !== document.body && !boxRef.current.contains(target))
+        || target.tagName === 'SELECT' || (ev.key === ' ' && target.tagName === 'BUTTON')) {
         return;
       }
       ev.preventDefault();
@@ -159,10 +152,9 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
-  // a mouse click plays or pauses; a tap shows or hides the controls, as in the phone's own player
-  const onSurfacePointerUp = (ev) => {
-    lastPointer.current = ev.pointerType;
-    if (ev.pointerType === 'mouse') {
+  // a click plays or pauses; a tap shows or hides the controls, as in the phone's own player
+  const onSurfaceClick = () => {
+    if (lastPointer.current === 'mouse') {
       togglePlay();
       showControls();
     } else if (active) {
@@ -172,10 +164,11 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
     }
   };
 
-  const mirrorEvents = Object.fromEntries(MIRRORED_EVENTS.map((name) => [name, (ev) => {
+  const onMediaEvent = (ev) => {
     dispatch(mirror(ev.currentTarget));
     tick();
-  }]));
+  };
+  const mirrorEvents = Object.fromEntries(MIRRORED_EVENTS.map((name) => [name, onMediaEvent]));
   const showOverlay = !mapView && (Boolean(error) || isBufferingVideo);
   return (
     <div
@@ -192,11 +185,12 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
         autoPlay
         playsInline
         muted={muted}
-        onPointerUp={onSurfacePointerUp}
+        onPointerDown={(ev) => { lastPointer.current = ev.pointerType; }}
+        onClick={onSurfaceClick}
         onDoubleClick={() => lastPointer.current === 'mouse' && toggleFullscreen()}
         onLoadedMetadata={(ev) => {
           attachVideo(ev.currentTarget);
-          if (isIos()) {
+          if (nativeHls()) {
             setHasAudio(ev.currentTarget.audioTracks?.length > 0);
           }
         }}
@@ -214,8 +208,14 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
           }
         }}
         // hls.js reports its own errors
-        onError={isIos() ? () => setError(UNABLE) : undefined}
+        onError={nativeHls() ? () => setError(UNABLE) : undefined}
         {...mirrorEvents}
+        onSeeking={(ev) => {
+          onMediaEvent(ev);
+          if (error) {
+            setAttempt((n) => n + 1); // seeking past a segment that failed to load reloads from there
+          }
+        }}
       />
       {children && <div className="absolute inset-0">{children}</div>}
       <div
@@ -225,7 +225,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
         {error ? (
           <>
             <ErrorOutline />
-            <Typography>{error}</Typography>
+            <Typography role="alert">{error}</Typography>
             <button
               type="button"
               className={`rounded-full bg-white/10 px-4 py-2 text-white hover:bg-white/20 ${showOverlay ? 'pointer-events-auto' : ''}`}
@@ -243,7 +243,8 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
           route={currentRoute}
           loop={loop}
           visible={controlsVisible}
-          centerButtons={!mapView && !error && !isBufferingVideo}
+          centerButtons={!mapView && !error}
+          buffering={isBufferingVideo}
           isPlaying={isPlaying}
           playSpeed={playSpeed}
           muted={muted}
@@ -251,8 +252,13 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isPlaying, playSpeed, isBuff
           fullscreen={fullscreen}
           onTogglePlay={togglePlay}
           onSkip={skip}
-          onSeek={seekAndRecover}
-          onSpeed={(speed) => { videoRef.current.playbackRate = speed; }}
+          onSeek={(offset) => dispatch(seek(offset))}
+          onSpeed={(speed) => {
+            // the default rate survives the video reloading
+            videoRef.current.defaultPlaybackRate = speed;
+            videoRef.current.playbackRate = speed;
+          }}
+          onActivity={showControls}
           onToggleMute={toggleMute}
           onToggleFullscreen={toggleFullscreen}
         />

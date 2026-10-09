@@ -43,6 +43,7 @@ vi.mock('hls.js/light', () => ({
   default: class {
     static Events = {};
     static ErrorTypes = {};
+    static isSupported() { return true; }
     on() {}
     loadSource() {}
     attachMedia() {}

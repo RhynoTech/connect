@@ -1,9 +1,9 @@
 import store from '../store';
 
 // The drive's <video> element is the playback clock. DriveVideo attaches it once
-// it has loaded, and everything that follows playback (timeline, map, time
-// display) reads currentOffset(). Until then, or without a video, playback is
-// parked at the last offset it was seeked to.
+// it has loaded; the timeline, map and controls follow it with followPlayback(),
+// and anything else can read currentOffset(). Until then, or without a video,
+// playback is parked at the last offset it was seeked to.
 let video = null;
 let parked = 0;
 
@@ -78,11 +78,14 @@ export function bufferedRange() {
   return null;
 }
 
-export function playVideo(speed) {
-  if (video) {
-    video.playbackRate = speed;
-    video.play().catch(() => {});
-  }
+// Before the video reloads (a retry, or recovering from a media error), so that
+// it resumes where it was rather than at the last seek.
+export function park() {
+  parked = currentOffset();
+}
+
+export function playVideo() {
+  video?.play().catch(() => {});
 }
 
 export function pauseVideo() {
