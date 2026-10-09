@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-import { attachVideo, currentOffset, seekTo } from '.';
+import { attachVideo, currentOffset, park, seekTo } from '.';
 import { pause, play, reducer, seek, selectLoop, videoState } from './playback';
 
 const state = { currentRoute: null, loop: null };
@@ -56,6 +56,17 @@ describe('playback', () => {
     expect(video.currentTime).toEqual(0);
   });
 
+  it('resumes a reloaded video where it was, not at the last seek', () => {
+    const video = makeVideo();
+    seekTo(1000);
+    attachVideo(video);
+    video.currentTime = 1.2; // played on past the seek
+    park();
+    video.currentTime = 0; // reloading starts the media over
+    attachVideo(video);
+    expect(currentOffset()).toEqual(1700);
+  });
+
   it('controls the video and still reports each action', () => {
     const video = makeVideo();
     attachVideo(video);
@@ -63,6 +74,7 @@ describe('playback', () => {
 
     play(2)(dispatch);
     expect(video.playbackRate).toEqual(2);
+    expect(video.defaultPlaybackRate).toEqual(2);
     expect(video.play).toHaveBeenCalled();
 
     pause()(dispatch);

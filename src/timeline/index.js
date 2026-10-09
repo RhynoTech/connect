@@ -37,8 +37,15 @@ export function seekTo(offset) {
   }
 }
 
+// Before the video reloads (a retry, or recovering from a media error), so that
+// it resumes where it was rather than at the last seek.
+export function park() {
+  parked = currentOffset();
+}
+
 export function playVideo(speed) {
   if (video) {
+    video.defaultPlaybackRate = speed; // survives the video reloading
     video.playbackRate = speed;
     video.play().catch(() => {});
   }

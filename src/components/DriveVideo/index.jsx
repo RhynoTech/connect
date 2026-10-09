@@ -7,7 +7,7 @@ import { api } from '../../api/backend';
 
 import Colors from '../../colors';
 import { ErrorOutline } from '../../icons';
-import { attachVideo, currentOffset, seekTo } from '../../timeline';
+import { attachVideo, currentOffset, park, seekTo } from '../../timeline';
 import { pause, play, videoState } from '../../timeline/playback';
 import { isIos } from '../../utils/browser.js';
 
@@ -21,7 +21,9 @@ const mirror = (video) => videoState({
   isBufferingVideo: video.readyState < 2 || video.seeking || (!video.paused && video.readyState < 3),
 });
 const MIRRORED_EVENTS = ['onLoadStart', 'onLoadedData', 'onCanPlay', 'onPlay', 'onPlaying', 'onPause', 'onWaiting',
-  'onSeeking', 'onSeeked', 'onRateChange'];
+  'onSeeked', 'onRateChange'];
+
+const nativeHls = () => isIos() || !Hls.isSupported();
 
 const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, onAudioStatusChange }) => {
   const videoRef = useRef(null);
@@ -34,7 +36,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
     seekTo(0);
   }, [fullname]);
 
-  // load the drive: native HLS on iOS, hls.js everywhere else
+  // load the drive: native HLS on iOS (and wherever hls.js can't run), hls.js everywhere else
   useEffect(() => {
     if (!fullname) {
       return undefined;
@@ -43,21 +45,21 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
     const src = api.video.getQcameraStreamUrl(fullname, exp, sig);
     let hls = null;
     setError(null);
-    if (isIos()) {
+    if (nativeHls()) {
       video.src = src;
     } else {
       let recovered = false;
       hls = new Hls({ maxBufferLength: 40 });
       hls.on(Hls.Events.BUFFER_CODECS, (_, data) => onAudioStatusChange?.(Boolean(data.audio)));
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) {
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) {
+        if (data.response?.code === 404) {
+          setError(NOT_UPLOADED); // say so at once, not after hls.js gives up on the segment
+        } else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) {
           recovered = true;
+          park();
           hls.recoverMediaError();
-        } else {
-          setError(data.response?.code === 404 ? NOT_UPLOADED : UNABLE);
+        } else if (data.fatal) {
+          setError(UNABLE);
         }
       });
       hls.loadSource(src);
@@ -81,7 +83,7 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
 
   const onLoadedMetadata = (ev) => {
     attachVideo(ev.currentTarget);
-    if (isIos()) {
+    if (nativeHls()) {
       onAudioStatusChange?.(ev.currentTarget.audioTracks?.length > 0);
     }
   };
@@ -100,8 +102,8 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
   };
 
   const retry = () => {
-    seekTo(currentOffset());
-    setAttempt(attempt + 1);
+    park();
+    setAttempt((n) => n + 1);
   };
 
   const mirrorEvents = Object.fromEntries(MIRRORED_EVENTS.map((name) => [name, (ev) => dispatch(mirror(ev.currentTarget))]));
@@ -119,8 +121,14 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
         onTimeUpdate={onTimeUpdate}
         onEnded={onEnded}
         // hls.js reports its own errors
-        onError={isIos() ? () => setError(UNABLE) : undefined}
+        onError={nativeHls() ? () => setError(UNABLE) : undefined}
         {...mirrorEvents}
+        onSeeking={(ev) => {
+          dispatch(mirror(ev.currentTarget));
+          if (error) {
+            setAttempt((n) => n + 1); // seeking past a segment that failed to load reloads from there
+          }
+        }}
       />
       <div
         className={`absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#16181AAA] transition-opacity
@@ -129,12 +137,13 @@ const DriveVideo = ({ dispatch, currentRoute, loop, isBufferingVideo, isMuted, o
         {error ? (
           <>
             <ErrorOutline />
-            <Typography>{error}</Typography>
+            <Typography role="alert">{error}</Typography>
             <button type="button" className="rounded-full bg-white/10 px-4 py-1 hover:bg-white/20" onClick={retry}>
               Retry
             </button>
           </>
-        ) : (
+        ) : showOverlay && (
+          // unmounted when hidden: it animates every frame even at zero opacity
           <CircularProgress style={{ color: Colors.white }} thickness={4} size={50} />
         )}
       </div>
